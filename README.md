@@ -6,7 +6,7 @@ measurement and satellite-series regression for Čačak, Serbia.
 This repository covers the machine learning half of the study: building the
 monthly NASA POWER series for the study grid cell, reconstructing the two
 predictor columns that the satellite product does not provide before 2001, and
-training and evaluating 24 regression models on the completed series.
+training and evaluating 27 regression models on the completed series.
 
 ## Data
 
@@ -42,13 +42,13 @@ output/
   checkpoints/                best-validation weights per model
   imputation_plots/           predictor curves before and after imputation
   results/
-    results.csv               all 24 models
+    results.csv               all 27 models
     results_consolidated.csv  best model per family
 src/
   build_cacak_monthly.py      POWER retrieval and monthly aggregation
   tsmf_imputation.py          MissForest reconstruction of the pre-2001 gap
   common.py                   shared configuration, data pipeline, metrics
-  <model>.py                  one script per architecture family
+  <family>.py                 one script per architecture family
   consolidate_results.py      best model per family
 ```
 
@@ -76,11 +76,12 @@ Then any subset of the model scripts. Each is independent and appends to the
 same results file, so they can be run in any order or one at a time.
 
 ```
-python src/lstm.py          python src/cnn_lstm.py      python src/tcn_gnn.py
-python src/gru.py           python src/cnn_gru.py       python src/xgboost_model.py
-python src/cnn.py           python src/tcn_lstm.py
-python src/tcn.py           python src/tcn_gru.py
-python src/lstm_gru.py
+python src/xgboost_model.py   python src/cnn_lstm.py      python src/lstm_gru.py
+python src/ann.py             python src/cnn_gru.py       python src/tcn_gnn.py
+python src/cnn.py             python src/tcn_lstm.py
+python src/tcn.py             python src/tcn_gru.py
+python src/lstm.py
+python src/gru.py
 ```
 
 Finally:
@@ -94,21 +95,22 @@ duplicate.
 
 ## Models
 
-24 models in 11 families. Depth variants are numbered by suffix.
+27 models in 12 families. Depth variants are numbered by suffix.
 
-| family | variants | architecture |
-| --- | --- | --- |
-| LSTM | 3 | 64, 64-32, 64-32-16 |
-| GRU | 3 | 64, 64-32, 64-32-16 |
-| CNN | 3 | one to three 1D convolutions, global average pooling |
-| TCN | 3 | one to three dilated causal blocks |
-| CNN-LSTM | 2 | convolutional front end, 32 or 32-16 recurrent |
-| CNN-GRU | 2 | as above with GRU cells |
-| TCN-LSTM | 2 | dilated causal front end, 32 or 32-16 recurrent |
-| TCN-GRU | 2 | as above with GRU cells |
-| LSTM-GRU | 2 | 64 LSTM into 32 or 32-16 GRU |
-| TCN-GNN | 1 | temporal convolutions, then graph convolutions over the window |
-| XGBoost | 1 | gradient-boosted trees, multi-output |
+| family | script | variants | architecture |
+| --- | --- | --- | --- |
+| XGBoost | `xgboost_model.py` | 1 | gradient-boosted trees, multi-output |
+| ANN | `ann.py` | 3 | flattened window, 64, 64-32 or 64-32-16 dense ReLU |
+| CNN | `cnn.py` | 3 | one to three 1D convolutions, global average pooling |
+| TCN | `tcn.py` | 3 | one to three dilated causal blocks |
+| LSTM | `lstm.py` | 3 | 64, 64-32, 64-32-16 |
+| GRU | `gru.py` | 3 | 64, 64-32, 64-32-16 |
+| CNN-LSTM | `cnn_lstm.py` | 2 | convolutional front end, 32 or 32-16 recurrent |
+| CNN-GRU | `cnn_gru.py` | 2 | as above with GRU cells |
+| TCN-LSTM | `tcn_lstm.py` | 2 | dilated causal front end, 32 or 32-16 recurrent |
+| TCN-GRU | `tcn_gru.py` | 2 | as above with GRU cells |
+| LSTM-GRU | `lstm_gru.py` | 2 | 64 LSTM into 32 or 32-16 GRU |
+| TCN-GNN | `tcn_gnn.py` | 1 | temporal convolutions, then graph convolutions over the window |
 
 Every neural model ends in the same head: dropout, a 16-unit dense layer with
 leaky ReLU, and a linear layer producing both targets.
@@ -163,6 +165,12 @@ convolutions without residual connections or weight normalisation. TCN results
 are internally consistent but should not be compared directly against
 keras-tcn numbers.
 
+**Edge footprint.** `results.csv` records parameter counts and model sizes for
+every model. TCN-GNN reaches R² = 0.9586 with 2,106 parameters, roughly 2.1 KB
+of INT8 weights, and its graph step reduces to a constant 12x12 matmul, so it
+needs no graph library at inference. That makes the second-best model in the
+comparison a viable microcontroller candidate.
+
 ## Results
 
 Best model per family on the held-out final fifth of the record.
@@ -176,6 +184,7 @@ Best model per family on the held-out final fifth of the record.
 | CNN-LSTM | cnn_lstm_2 | 0.4767 | 12.54 | 0.6186 | 0.9011 |
 | TCN-GRU | tcn_gru_2 | 0.4907 | 13.75 | 0.6211 | 0.9005 |
 | CNN | cnn_3 | 0.5261 | 15.41 | 0.6705 | 0.8843 |
+| ANN | ann_3 | 0.5320 | 13.96 | 0.6702 | 0.8839 |
 | GRU | gru_2 | 0.5144 | 14.12 | 0.6716 | 0.8836 |
 | TCN | tcn_2 | 0.4952 | 13.03 | 0.6736 | 0.8819 |
 | LSTM-GRU | lstm_gru_1 | 0.5330 | 16.07 | 0.6774 | 0.8811 |
@@ -185,11 +194,17 @@ MAE and RMSE are in kWh/m²/day; MAPE is scale-free. Ranking is by R².
 MSE, MSLE, RMSLE and adjusted R² are also recorded for every model in
 `output/results/results.csv`, along with parameter counts and timings.
 
-Two results are worth noting. Gradient boosting leads by a wide margin, which is
-the expected outcome for a moderate-size tabular problem with strong seasonal
-structure. Among the neural models the graph architecture is clearly ahead,
-while the remaining nine families fall within 0.87 to 0.91 of each other, so the
-choice among them matters far less than the gap to the two leaders.
+Gradient boosting leads by a wide margin, which is the expected outcome for a
+moderate-size tabular problem with strong seasonal structure. Among the neural
+models the graph architecture is clearly ahead.
+
+The ANN baseline is the result worth dwelling on. `ann_3` reaches R² = 0.8839
+with 4,514 parameters and no architectural representation of temporal order,
+which matches the best CNN and beats the best GRU, TCN, LSTM-GRU and LSTM. Only
+XGBoost, TCN-GNN and the four convolutional-recurrent hybrids separate
+themselves from a plain feed-forward network by a clear margin. At monthly
+resolution the seasonal cycle is evidently recoverable from a flattened window,
+so architectural complexity is not by itself rewarded here.
 
 ## Limitations
 
